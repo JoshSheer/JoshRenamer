@@ -1,8 +1,8 @@
-# 🚀 JoshMapper
+# 🚀 JoshRenamer
 
 > Smart file renaming tool that maps files to structured data using timestamp matching.
 
-JoshMapper is a Python-based desktop application that automates batch file renaming by matching files to external TXT/CSV data using time proximity logic.
+JoshRenamer is a Python-based desktop application that automates batch file renaming by matching files to external TXT/CSV data using time proximity logic.
 
 Built with a modern GUI using CustomTkinter, the tool provides real-time preview, validation checks, and safe execution.
 
@@ -22,7 +22,7 @@ Built with a modern GUI using CustomTkinter, the tool provides real-time preview
 
 ## 🧠 Core Idea
 
-JoshMapper matches files to data entries by comparing timestamps:
+JoshRenamer matches files to data entries by comparing timestamps:
 
 - Extracts time from filenames  
 - Extracts time from dataset (TXT/CSV)  
