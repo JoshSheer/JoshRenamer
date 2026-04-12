@@ -6,7 +6,6 @@ import customtkinter as ctk
 from CTkMessagebox import CTkMessagebox
 from CTkTable import *
 from PIL import Image
-import pywinstyles
 # --- Global Variables ---
 names = []
 files = []
@@ -100,7 +99,6 @@ def execute_rename(pairs):
             successes.append(new_filename)
         except Exception as e:
             failures.append(str(e))
-  #  successes.append(new_filename)
     return successes, failures
 
 # --- UI Functions ---
