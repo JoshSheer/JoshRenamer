@@ -6,7 +6,7 @@ import customtkinter as ctk
 from CTkMessagebox import CTkMessagebox
 from CTkTable import *
 from PIL import Image
-import pywinstyles
+
 # --- Global Variables ---
 names = []
 files = []
@@ -40,7 +40,7 @@ def parse_line(line: str):
         h, m, s = duration.split(":")
         total_duration = int(h) * 3600 + int(m) * 60 + int(s)
         #print(total_duration)
-        if total_duration <= 1:
+        if total_duration <= 4:
             return None
         return (name, start_time)
 
@@ -225,7 +225,7 @@ def show_table():
 # --- UI Layout ---
 
 app = ctk.CTk()
-app.iconbitmap("assets/police.ico")
+app.iconbitmap("police.ico")
 app.title("JoshRenamer")
 app.geometry("1280x720")
 app.configure(fg_color="#1c3554")
@@ -242,7 +242,7 @@ sidebar.grid_propagate(False)
 main = ctk.CTkFrame(app, fg_color="#1c3554")
 main.grid(row=0, column=1, sticky="nsew")
 
-police_img_path = resource_path("assets/police.png")
+police_img_path = resource_path("police.png")
 
 my_image = ctk.CTkImage(
     light_image=Image.open(police_img_path),
