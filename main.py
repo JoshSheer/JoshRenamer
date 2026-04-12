@@ -123,9 +123,10 @@ def update_buttons():
         btn_reset.configure(state="disabled")
 def load_txt():
     global names
-    filepath = filedialog.askopenfilename()
+    filepath = filedialog.askopenfilename(title="Select an TXT file", filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")])
     if filepath:
         names = load_names_from_txt(filepath)
+        update_buttons()
         update_status()
        # empty_label.configure(text=f"TXT File: {len(names)} names loaded")
 
