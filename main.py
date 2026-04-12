@@ -6,6 +6,7 @@ import customtkinter as ctk
 from CTkMessagebox import CTkMessagebox
 from CTkTable import *
 from PIL import Image
+import pywinstyles
 # --- Global Variables ---
 names = []
 files = []
@@ -24,21 +25,28 @@ def resource_path(relative_path):
 def parse_line(line: str):
     reader = csv.reader([line])
     row = next(reader)
+    
     if not row or not row[0].strip():
+        return None
+    if len(row) < 11:
         return None
     value = row[0].strip()
     parts = value.split('_')
+
     if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
         name = row[0].strip()
         start_time = row[8].strip()
         duration = row[10].strip()
         h, m, s = duration.split(":")
         total_duration = int(h) * 3600 + int(m) * 60 + int(s)
-        if total_duration <= 4:
+        #print(total_duration)
+        if total_duration <= 1:
             return None
         return (name, start_time)
+
     return None
 
+   
 def load_names_from_txt(filepath):
     names = []
     with open(filepath, encoding='utf-8') as f:
@@ -99,33 +107,40 @@ def execute_rename(pairs):
             successes.append(new_filename)
         except Exception as e:
             failures.append(str(e))
+  #  successes.append(new_filename)
     return successes, failures
 
 # --- UI Functions ---
 
-
+def update_buttons():
+    if names and files:
+        btn_preview.configure(state="normal")
+        btn_rename.configure(state="normal")
+        btn_reset.configure(state="normal")
+    else:
+        btn_preview.configure(state="disabled")
+        btn_rename.configure(state="disabled")
+        btn_reset.configure(state="disabled")
 def load_txt():
     global names
     filepath = filedialog.askopenfilename()
     if filepath:
         names = load_names_from_txt(filepath)
-    update_status()
+        update_status()
        # empty_label.configure(text=f"TXT File: {len(names)} names loaded")
 
 def select_files():
     global files
-    selected = filedialog.askopenfilenames()
+    selected = filedialog.askopenfilenames(title="Select an MP3 files", filetypes=[("Audio Files", "*.mp3"), ("All Files", "*.*")])
     if selected:
         files = list(selected)
-        btn_preview.configure(state="normal")
-        btn_rename.configure(state="normal")
-        btn_reset.configure(state="normal")
+        update_buttons()
         update_status()
 
 def update_status():
     txt_status = f"TXT File: {len(names)} names loaded" if names else "TXT File: Not loaded"
     files_status = f"MP3 Files: {len(files)} selected" if files else "MP3 Files: 0 selected"
-
+    print(names)
     ready_status = "✔ Ready to preview" if names and files else "Waiting for input..."
 
     empty_label.configure(text=f"{txt_status}\n{files_status}\n\n{ready_status}")
@@ -185,19 +200,17 @@ def rename():
         print(successes, failures)
 
 def reset():
-    global names, files, pairs
+    global names, files, pairs, table
     names.clear()
     files.clear()
     pairs.clear()
 
-    empty_label.configure(text="No file loaded")
-    empty_label.configure(text="")
     
-
-    table.values=[[]]
-    
-    table.pack(pady=10, fill="both", expand=True)
     table.destroy()
+    table = CTkTable(master=table_container, width=15, colors=["#25415c", "#1d344a"], values=[[]], corner_radius=12)
+    table.pack(pady=14, padx=14, fill="both", expand=True)
+
+    empty_label.configure(text="No files loaded yet\nLoad a TXT file and select files to preview")
     btn_preview.configure(state="disabled")
     btn_rename.configure(state="disabled")
     btn_reset.configure(state="disabled")
@@ -212,7 +225,7 @@ def show_table():
 # --- UI Layout ---
 
 app = ctk.CTk()
-app.iconbitmap("police.ico")
+app.iconbitmap("assets/police.ico")
 app.title("JoshRenamer")
 app.geometry("1280x720")
 app.configure(fg_color="#1c3554")
@@ -229,7 +242,7 @@ sidebar.grid_propagate(False)
 main = ctk.CTkFrame(app, fg_color="#1c3554")
 main.grid(row=0, column=1, sticky="nsew")
 
-police_img_path = resource_path("police.png")
+police_img_path = resource_path("assets/police.png")
 
 my_image = ctk.CTkImage(
     light_image=Image.open(police_img_path),
