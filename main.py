@@ -32,6 +32,11 @@ def parse_line(line: str):
     if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
         name = row[0].strip()
         start_time = row[8].strip()
+        duration = row[10].strip()
+        h, m, s = duration.split(":")
+        total_duration = int(h) * 3600 + int(m) * 60 + int(s)
+        if total_duration <= 4:
+            return None
         return (name, start_time)
     return None
 
