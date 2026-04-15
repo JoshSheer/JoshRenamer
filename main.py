@@ -245,7 +245,7 @@ def show_table():
 # --- UI Layout ---
 
 app = ctk.CTk()
-app.iconbitmap("police.ico")
+app.iconbitmap("YOUR-IMAGE")
 app.title("JoshRenamer")
 app.geometry("1280x720")
 app.configure(fg_color="#1c3554")
@@ -262,11 +262,11 @@ sidebar.grid_propagate(False)
 main = ctk.CTkFrame(app, fg_color="#1c3554")
 main.grid(row=0, column=1, sticky="nsew")
 
-police_img_path = resource_path("police.png")
+your_img_path = resource_path("YOUR-IMAGE")
 
 my_image = ctk.CTkImage(
-    light_image=Image.open(police_img_path),
-    dark_image=Image.open(police_img_path),
+    light_image=Image.open(your_img_path),
+    dark_image=Image.open(your_img_path),
     size=(50, 50)
 )
 
