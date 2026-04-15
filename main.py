@@ -39,10 +39,7 @@ def parse_line(line: str):
         duration = row[10].strip()
         h, m, s = duration.split(":")
         total_duration = int(h) * 3600 + int(m) * 60 + int(s)
-        #print(total_duration)
-        if total_duration <= 4:
-            return None
-        return (name, start_time)
+        retrun (name, start_time, total_duration
 
     return None
 
@@ -77,21 +74,44 @@ def build_pairs(parsed_entries, files):
         file_seconds = extract_time_from_filename(filename)
         extension = os.path.splitext(file)[1]
         closest = min(parsed_entries, key=lambda entry: abs(extract_time_from_csv(entry[1]) - file_seconds))
+        diff = abs(extract_time_from_csv(closest[1]) - file_seconds)
+        if diff > 300:
+            file_seconds_12h = file_seconds + 43200
+            closest_12h = min(parsed_entries, key=lambda entry: abs(extract_time_from_csv(entry[1]) - file_seconds_12h))
+            diff_12h = abs(extract_time_from_csv(closest_12h[1]) - file_seconds_12h)
+            
+            if diff_12h <= 300:
+                new_filename = closest_12h[0] + extension
+                pairs.append((file, new_filename))
+                continue
+            
+            # no match found — check duration
+            if closest[2] <= 4:
+                continue
+            
+            pairs.append((file, "NO_MATCH_FOUND"))
+            continue
         new_filename = closest[0] + extension
         pairs.append((file, new_filename))
     return pairs
 
+
 def validate_pairs(names, files, pairs):
     warnings = []
     new_filenames = [pair[1] for pair in pairs]
-    if len(names) != len(files):
+    valid_pairs = [p for p in pairs if p[1] != "NO_MATCH_FOUND"]
+    if len(valid_pairs) != len(files) - len([p for p in pairs if p[1] == "NO_MATCH_FOUND"]):
         warnings.append(f"מספר שמות: {len(names)} \n לא תואם למספר הקבצים: {len(files)}")
     if len(new_filenames) != len(set(new_filenames)):
         warnings.append("קבצים כפולים נמצאו")
     for pair in pairs:
         if not os.path.exists(pair[0]):
             warnings.append(f"{pair[0]} does not exist")
+    no_matches = [pair[0] for pair in pairs if pair[1] == "NO_MATCH_FOUND"]
+    if no_matches:
+        warnings.append(f"{len(no_matches)} files had no matching CSV entry")
     return warnings
+
 
 
 def execute_rename(pairs):
@@ -107,7 +127,6 @@ def execute_rename(pairs):
             successes.append(new_filename)
         except Exception as e:
             failures.append(str(e))
-  #  successes.append(new_filename)
     return successes, failures
 
 # --- UI Functions ---
