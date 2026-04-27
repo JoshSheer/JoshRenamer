@@ -32,14 +32,13 @@ def parse_line(line: str):
         return None
     value = row[0].strip()
     parts = value.split('_')
-
     if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
         name = row[0].strip()
         start_time = row[8].strip()
         duration = row[10].strip()
         h, m, s = duration.split(":")
         total_duration = int(h) * 3600 + int(m) * 60 + int(s)
-        retrun (name, start_time, total_duration
+        return (name, start_time, total_duration)
 
     return None
 
@@ -53,57 +52,65 @@ def load_names_from_txt(filepath):
                 names.append(result)
     return names
 
-def extract_time_from_filename(filename):
+def extract_datetime_from_filename(filename):
     parts = filename.split("Time_")
     time_part = parts[1].split("file")[0]
     time_str = time_part.replace("_", ":")
-    h, m, s = time_str.split(":")
-    total_seconds = int(h) * 3600 + int(m) * 60 + int(s)
-    return total_seconds
+    parts_date = filename.split("Date_")[1].split("Time_")[0]
+    d, mo, y = parts_date.split("_")
+    h, mi, s = time_str.split(":")
+    return datetime(int("20" + y), int(mo), int(d), int(h), int(mi), int(s)).timestamp()
 
-def extract_time_from_csv(csv_time):
-    parts = csv_time.split(" ")[1]
-    h, m, s = parts.split(":")
-    total_seconds = int(h) * 3600 + int(m) * 60 + int(s)
-    return total_seconds
+def extract_datetime_from_csv(csv_time):
+    date_part = csv_time.split(" ")[0]
+    time_part = csv_time.split(" ")[1]
+    d, mo, y = date_part.split("/")
+    h, mi, s = time_part.split(":")
+    return datetime(int(y), int(mo), int(d), int(h), int(mi), int(s)).timestamp()
+
 
 def build_pairs(parsed_entries, files):
     pairs = []
+    remaining = list(parsed_entries)
     for file in files:
         filename = os.path.basename(file)
-        file_seconds = extract_time_from_filename(filename)
+        file_seconds = extract_datetime_from_filename(filename)
         extension = os.path.splitext(file)[1]
-        closest = min(parsed_entries, key=lambda entry: abs(extract_time_from_csv(entry[1]) - file_seconds))
-        diff = abs(extract_time_from_csv(closest[1]) - file_seconds)
+        
+        closest = min(remaining, key=lambda entry: abs(extract_datetime_from_csv(entry[1]) - file_seconds))
+        diff = abs(extract_datetime_from_csv(closest[1]) - file_seconds)
+
         if diff > 300:
             file_seconds_12h = file_seconds + 43200
-            closest_12h = min(parsed_entries, key=lambda entry: abs(extract_time_from_csv(entry[1]) - file_seconds_12h))
-            diff_12h = abs(extract_time_from_csv(closest_12h[1]) - file_seconds_12h)
+            closest_12h = min(parsed_entries, key=lambda entry: abs(extract_datetime_from_csv(entry[1]) - file_seconds_12h))
+            diff_12h = abs(extract_datetime_from_csv(closest_12h[1]) - file_seconds_12h)
+
             
             if diff_12h <= 300:
                 new_filename = closest_12h[0] + extension
                 pairs.append((file, new_filename))
+                remaining.remove(closest_12h)
                 continue
             
             # no match found — check duration
-            if closest[2] <= 4:
+            if closest[2] <= 4:        
                 continue
             
-            pairs.append((file, "NO_MATCH_FOUND"))
+            pairs.append((file, "NO_MATCH_FOUND"))  # long duration AND no match, flag it
             continue
         new_filename = closest[0] + extension
         pairs.append((file, new_filename))
+        remaining.remove(closest)
     return pairs
-
 
 def validate_pairs(names, files, pairs):
     warnings = []
-    new_filenames = [pair[1] for pair in pairs]
     valid_pairs = [p for p in pairs if p[1] != "NO_MATCH_FOUND"]
+    new_filenames = [p[1] for p in valid_pairs]
     if len(valid_pairs) != len(files) - len([p for p in pairs if p[1] == "NO_MATCH_FOUND"]):
         warnings.append(f"מספר שמות: {len(names)} \n לא תואם למספר הקבצים: {len(files)}")
-    if len(new_filenames) != len(set(new_filenames)):
-        warnings.append("קבצים כפולים נמצאו")
+    #if len(new_filenames) != len(set(new_filenames)):
+   #     warnings.append("קבצים כפולים נמצאו")
     for pair in pairs:
         if not os.path.exists(pair[0]):
             warnings.append(f"{pair[0]} does not exist")
