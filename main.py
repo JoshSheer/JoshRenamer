@@ -1,6 +1,7 @@
 import os
 import sys
 import csv
+from datetime import datetime
 from tkinter import messagebox, filedialog, ttk
 import customtkinter as ctk
 from CTkMessagebox import CTkMessagebox
@@ -12,7 +13,7 @@ names = []
 files = []
 pairs = []
 
-filepath = 'data.csv'
+#filepath = 'data.csv'
 ctk.set_appearance_mode("dark")
 def resource_path(relative_path):
     try:
