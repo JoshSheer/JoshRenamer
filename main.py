@@ -2,7 +2,7 @@ import os
 import sys
 import csv
 from datetime import datetime
-from tkinter import messagebox, filedialog, ttk
+from tkinter import filedialog
 import customtkinter as ctk
 from CTkMessagebox import CTkMessagebox
 from CTkTable import *
@@ -31,75 +31,99 @@ def parse_line(line: str):
         return None
     if len(row) < 11:
         return None
+        
     value = row[0].strip()
     parts = value.split('_')
     if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
         name = row[0].strip()
         start_time = row[8].strip()
         duration = row[10].strip()
-        h, m, s = duration.split(":")
-        total_duration = int(h) * 3600 + int(m) * 60 + int(s)
+        try:
+            h, m, s = duration.split(":")
+            total_duration = int(h) * 3600 + int(m) * 60 + int(s)
+        except ValueError:
+            return None
         return (name, start_time, total_duration)
-
     return None
-
    
 def load_names_from_txt(filepath):
     names = []
-    with open(filepath, encoding='utf-8') as f:
-        for line in f:
-            result = parse_line(line)
-            if result:
-                names.append(result)
-    return names
+    failures = []
+    try:
+        with open(filepath, encoding='utf-8') as f:
+            for line in f:
+                result = parse_line(line)
+                if result:
+                    names.append(result)
+    except Exception as e:
+        failures.append(str(e))
+    return names, failures
 
 def extract_datetime_from_filename(filename):
-    parts = filename.split("Time_")
-    time_part = parts[1].split("file")[0]
-    time_str = time_part.replace("_", ":")
-    parts_date = filename.split("Date_")[1].split("Time_")[0]
-    d, mo, y = parts_date.split("_")
-    h, mi, s = time_str.split(":")
-    return datetime(int("20" + y), int(mo), int(d), int(h), int(mi), int(s)).timestamp()
+    try:
+        parts = filename.split("Time_")
+        time_part = parts[1].split("file")[0]
+        time_str = time_part.replace("_", ":")
+        parts_date = filename.split("Date_")[1].split("Time_")[0]
+        d, mo, y = parts_date.split("_")
+        h, mi, s = time_str.split(":")
+        return datetime(int("20" + y), int(mo), int(d), int(h), int(mi), int(s)).timestamp()
+    except (IndexError, ValueError):
+        return None
 
 def extract_datetime_from_csv(csv_time):
-    date_part = csv_time.split(" ")[0]
-    time_part = csv_time.split(" ")[1]
-    d, mo, y = date_part.split("/")
-    h, mi, s = time_part.split(":")
-    return datetime(int(y), int(mo), int(d), int(h), int(mi), int(s)).timestamp()
+    try:
+        date_part = csv_time.split(" ")[0]
+        time_part = csv_time.split(" ")[1]
+        d, mo, y = date_part.split("/")
+        h, mi, s = time_part.split(":")
+        return datetime(int(y), int(mo), int(d), int(h), int(mi), int(s)).timestamp()
+    except (IndexError, ValueError):
+        return None
 
 
 def build_pairs(parsed_entries, files):
     pairs = []
-    remaining = list(parsed_entries)
+    remaining = []
+    for entry in parsed_entries:
+        ts = extract_datetime_from_csv(entry[1])
+        if ts is not None:
+            remaining.append((entry, ts))
     for file in files:
         filename = os.path.basename(file)
         file_seconds = extract_datetime_from_filename(filename)
+        if file_seconds is None:
+            pairs.append((file, "NO_MATCH_FOUND"))
+            continue
+        if not remaining:
+            pairs.append((file, "NO_MATCH_FOUND"))
+            continue
         extension = os.path.splitext(file)[1]
-        
-        closest = min(remaining, key=lambda entry: abs(extract_datetime_from_csv(entry[1]) - file_seconds))
-        diff = abs(extract_datetime_from_csv(closest[1]) - file_seconds)
+
+        closest = min(remaining, key=lambda pair: abs(pair[1] - file_seconds))
+        entry, ts = closest
+        diff = abs(ts - file_seconds)
 
         if diff > 300:
             file_seconds_12h = file_seconds + 43200
-            closest_12h = min(parsed_entries, key=lambda entry: abs(extract_datetime_from_csv(entry[1]) - file_seconds_12h))
-            diff_12h = abs(extract_datetime_from_csv(closest_12h[1]) - file_seconds_12h)
+            closest_12h = min(remaining, key=lambda pair: abs(pair[1] - file_seconds_12h))
+            entry_12h, ts_12h = closest_12h
+            diff_12h = abs(ts_12h - file_seconds_12h)
 
-            
             if diff_12h <= 300:
-                new_filename = closest_12h[0] + extension
+                new_filename = entry_12h[0] + extension
                 pairs.append((file, new_filename))
                 remaining.remove(closest_12h)
                 continue
             
             # no match found — check duration
-            if closest[2] <= 4:        
+            if entry[2] <= 4:        
                 continue
             
-            pairs.append((file, "NO_MATCH_FOUND"))  # long duration AND no match, flag it
+            pairs.append((file, "NO_MATCH_FOUND"))
             continue
-        new_filename = closest[0] + extension
+
+        new_filename = entry[0] + extension
         pairs.append((file, new_filename))
         remaining.remove(closest)
     return pairs
@@ -110,8 +134,8 @@ def validate_pairs(names, files, pairs):
     new_filenames = [p[1] for p in valid_pairs]
     if len(valid_pairs) != len(files) - len([p for p in pairs if p[1] == "NO_MATCH_FOUND"]):
         warnings.append(f"מספר שמות: {len(names)} \n לא תואם למספר הקבצים: {len(files)}")
-    #if len(new_filenames) != len(set(new_filenames)):
-   #     warnings.append("קבצים כפולים נמצאו")
+    if len(new_filenames) != len(set(new_filenames)):
+        warnings.append("קבצים כפולים נמצאו")
     for pair in pairs:
         if not os.path.exists(pair[0]):
             warnings.append(f"{pair[0]} does not exist")
@@ -130,6 +154,9 @@ def execute_rename(pairs):
         new_filename = pair[1]
         folder = os.path.dirname(old_path)
         new_path = os.path.join(folder, new_filename)
+        if os.path.exists(new_path):
+            failures.append(f"{new_filename} already exists - skipped")
+            continue   
         try:
             os.rename(old_path, new_path)
             successes.append(new_filename)
@@ -150,11 +177,17 @@ def update_buttons():
         btn_reset.configure(state="disabled")
 def load_txt():
     global names
-    filepath = filedialog.askopenfilename(title="Select an TXT file", filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")])
-    if filepath:
-        names = load_names_from_txt(filepath)
-        update_buttons()
-        update_status()
+    try:
+        filepath = filedialog.askopenfilename(title="Select an TXT file", filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")])
+        if filepath:
+            names, failures = load_names_from_txt(filepath)
+            if failures:
+                CTkMessagebox(title="Load Error", message="\n".join(failures), icon="warning")
+
+            update_buttons()
+            update_status()
+    except Exception as e:
+        CTkMessagebox(title="Error", message=f"Something went wrong:\n{e}", icon="cancel")
        # empty_label.configure(text=f"TXT File: {len(names)} names loaded")
 
 def select_files():
@@ -177,55 +210,64 @@ def update_status():
 
 def preview():
     global pairs, table
-    pairs = build_pairs(names, files)
+    try:
 
-    table_values = [["Original Filename", "New Filename"]]
+        pairs = build_pairs(names, files)
 
-    for old_path, new_name in pairs:
-        table_values.append([os.path.basename(old_path), new_name])
+        table_values = [["Original Filename", "New Filename"]]
 
-    table.destroy()
-    
-    empty_label.configure(text="")
-    table = CTkTable(
-        master=table_container,
-        width=15,
-        values=table_values,
-        colors=["#27435e", "#1d344a"],
-        header_color="#4653ab",
-        corner_radius=20
-    )
-    
-    table.pack(pady=4, padx=5, fill="both", expand=True)
+        for old_path, new_name in pairs:
+            table_values.append([os.path.basename(old_path), new_name])
+
+        table.destroy()
+        
+        empty_label.configure(text="")
+        table = CTkTable(
+            master=table_container,
+            width=15,
+            values=table_values,
+            colors=["#27435e", "#1d344a"],
+            header_color="#4653ab",
+            corner_radius=20
+        )
+        
+        table.pack(pady=4, padx=5, fill="both", expand=True)
+    except Exception as e:
+        CTkMessagebox(title="Error", message=f"Something went wrong:\n{e}", icon="cancel")
+
+
     
     
 def rename():
-    warnings = validate_pairs(names, files, pairs)
-    if warnings:
-        print(warnings)
-        CTkMessagebox(
-    title="Warning",
-    message="\n".join(warnings),
-    icon="warning"
-)
-        return
-    successes, failures = execute_rename(pairs)
-    if successes:
-        CTkMessagebox(
-    title="Success",
-    message=f"Renamed {len(successes)} files",
-    icon="check",
-    option_1="Thanks!"
-)
-    
-    if failures:
-        CTkMessagebox(
-    title="Rename Errors",
-    message="\n".join(failures),
-    icon="warning"
-)
+    try:
+        warnings = validate_pairs(names, files, pairs)
+        if warnings:
+            print(warnings)
+            CTkMessagebox(
+        title="Warning",
+        message="\n".join(warnings),
+        icon="warning"
+    )
+            return
+        successes, failures = execute_rename(pairs)
+        if successes:
+            CTkMessagebox(
+        title="Success",
+        message=f"Renamed {len(successes)} files",
+        icon="check",
+        option_1="Thanks!"
+    )
+        
+        if failures:
+            CTkMessagebox(
+        title="Rename Errors",
+        message="\n".join(failures),
+        icon="warning"
+    )
 
-        print(successes, failures)
+            print(successes, failures)
+    except Exception as e:
+        CTkMessagebox(title="Error", message=f"Something went wrong:\n{e}", icon="cancel")
 
 def reset():
     global names, files, pairs, table
@@ -243,17 +285,10 @@ def reset():
     btn_rename.configure(state="disabled")
     btn_reset.configure(state="disabled")
 
-def show_empty_state():
-    table.pack_forget()
-    empty_label.pack(expand=True)
-
-def show_table():
-    empty_label.pack_forget()
-    table.pack(fill="both", expand=True, padx=14, pady=14)
 # --- UI Layout ---
 
 app = ctk.CTk()
-app.iconbitmap("YOUR-IMAGE")
+app.iconbitmap("police.png")
 app.title("JoshRenamer")
 app.geometry("1280x720")
 app.configure(fg_color="#1c3554")
@@ -270,7 +305,7 @@ sidebar.grid_propagate(False)
 main = ctk.CTkFrame(app, fg_color="#1c3554")
 main.grid(row=0, column=1, sticky="nsew")
 
-your_img_path = resource_path("YOUR-IMAGE")
+your_img_path = resource_path("police.png")
 
 my_image = ctk.CTkImage(
     light_image=Image.open(your_img_path),
