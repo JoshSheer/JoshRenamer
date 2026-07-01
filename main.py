@@ -1,6 +1,7 @@
 import os
 import sys
 import csv
+from typing import Optional
 from datetime import datetime
 from tkinter import filedialog
 import customtkinter as ctk
@@ -13,11 +14,14 @@ names = []
 files = []
 pairs = []
 
+logs_window: Optional[ctk.CTkToplevel] = None
+logs_textbox: Optional[ctk.CTkTextbox] = None
+
 #filepath = 'data.csv'
 ctk.set_appearance_mode("dark")
 def resource_path(relative_path):
     try:
-        base_path = sys._MEIPASS
+        base_path = sys._MEIPASS #type: ignore
     except AttributeError:
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
@@ -264,10 +268,16 @@ def rename():
         message="\n".join(failures),
         icon="warning"
     )
+        logs_message("=== Rename Failure")
+        for failure in failures:
+                logs_message(f"[FAILED] {failure}")
+        logs_message("==================\n")
+        print(successes, failures)
 
-            print(successes, failures)
     except Exception as e:
+        logs_message(f"[CRITICAL ERROR] Something went wrong: {e}")
         CTkMessagebox(title="Error", message=f"Something went wrong:\n{e}", icon="cancel")
+
 
 def reset():
     global names, files, pairs, table
@@ -285,12 +295,40 @@ def reset():
     btn_rename.configure(state="disabled")
     btn_reset.configure(state="disabled")
 
+
+def logs_message(message: str):
+    global logs_window, logs_textbox
+
+    # 1. אם החלון לא קיים או נסגר על ידי המשתמש - ניצור אותו מחדש כאן
+    if logs_window is None or not logs_window.winfo_exists():
+        logs_window = ctk.CTkToplevel(app)
+        logs_window.title("Console Logs & Errors")
+        logs_window.geometry("500x300")
+        logs_window.attributes("-topmost", True)
+
+        # יצירת התיבה ישירות בתוך החלון החדש
+        logs_textbox = ctk.CTkTextbox(logs_window, width=480, height=280, font=("Consolas", 12))
+        logs_textbox.pack(padx=10, pady=10, fill="both", expand=True)
+        logs_textbox.configure(state="disabled")
+        
+        # מכריח את ה-UI להתרענן ולהיבנות פיזית בזיכרון
+        logs_window.update()
+
+    # 2. הזרקת הטקסט - מתבצעת רק אחרי שאנחנו בטוחים ב-100% שהרכיב קיים
+    if logs_textbox is not None:
+        logs_textbox.configure(state="normal")
+        logs_textbox.insert("end", message + "\n")
+        logs_textbox.configure(state="disabled")
+        logs_textbox.see("end")  # גלילה אוטומטית לסוף הטקסט
+
 # --- UI Layout ---
 
 app = ctk.CTk()
 app.iconbitmap("police.png")
 app.title("JoshRenamer")
 app.geometry("1280x720")
+
+
 app.configure(fg_color="#1c3554")
 
 # רק grid על app
@@ -312,6 +350,23 @@ my_image = ctk.CTkImage(
     dark_image=Image.open(your_img_path),
     size=(50, 50)
 )
+
+# test button for error
+def test_error_trigger():
+    mock_failures = [
+        "קובץ 'photo.jpg' נעול על ידי תוכנה אחרת",
+        "אין הרשאות כתיבה לתיקייה C:/Protected",
+        "השם החדש מכיל תווים לא חוקיים (?, *, :)"
+    ]
+    
+    logs_message("=== RENAME FAILURES (TEST) ===")
+    for failure in mock_failures:
+        logs_message(f"[FAILED] {failure}")
+    logs_message("=======================\n")
+
+# יצירת כפתור זמני בנאבר להרצת הטסט
+btn_test = ctk.CTkButton(sidebar, text="בדיקת שגיאות (Test)", fg_color="red", command=test_error_trigger)
+#btn_test.grid(row=5, column=5, sticky="ns")
 
 logo = ctk.CTkLabel(sidebar, image=my_image, text="")
 logo.pack(side="top", pady=(18, 14))
@@ -336,8 +391,12 @@ btn_reset.pack(side="bottom", pady=24, padx=20)
 btn_rename.configure(state="disabled")
 
 # header בתוך main
+
+btn_logs = ctk.CTkButton(sidebar, text="Logs", command=logs_message("החלון נפתח לבד"))
+
 header = ctk.CTkFrame(main, fg_color="#1c3554")
 header.pack(fill="x", padx=10, pady=10)
+
 
 title = ctk.CTkLabel(header, text="JoshRenamer", font=("Arial", 28, "bold"), text_color="white")
 title.pack(anchor="n", padx=16, pady=(12, 4))
