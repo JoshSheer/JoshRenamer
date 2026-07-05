@@ -1,81 +1,75 @@
 import os
 import sys
 import csv
-from typing import Optional
+import traceback
 from datetime import datetime
+import tkinter as tk
 from tkinter import filedialog
 import customtkinter as ctk
 from CTkMessagebox import CTkMessagebox
-from CTkTable import *
+from CTkTable import CTkTable
 from PIL import Image
 
-# --- Global Variables ---
-names = []
-files = []
-pairs = []
+MATCH_TOLERANCE = 300      # max seconds between a csv entry and a file timestamp
+HALF_DAY = 43200           # 12hour clock, so PM files 12h off
+NO_MATCH = "NO_MATCH_FOUND"
 
-logs_window: Optional[ctk.CTkToplevel] = None
-logs_textbox: Optional[ctk.CTkTextbox] = None
-
-#filepath = 'data.csv'
+HELP_STEPS = [
+    (" TXT לפתוח את הקובץ ", "תלחץ 'לטעון קובץ טקסט' ותבחר את הקובץ דאטא שהורדת מהמערכת, " "\nהסטטוס למטה מראה כמה קבצים יש בקובץ טקסט", "help_load_txt.png"),
+    ("תבחר את ההקלטות ", "תלחץ 'בחר קבצים' ותבחר את הקבצי שמע שאתה רוצה לשנות את שמם" "\nאתה יכול לבחור כמה קבצים במקביל", "help_select_files.png"),
+    ("סקירה של ההשוואות", "תלחץ 'הצג השוואות' בשביל לראות איזה שם יקבל כל קובץ\n" "שורות שבצבע אדום לא נמצא מקביל אליהן בטבלה והתוכנה תדלג עליהן\n", "help_preview.png"),
+    ("Rename", "תלחץ שנה שם של הקבצים ולאחר מכן אישור, אם משהו לא עובר נכון\n" " אתה תראה את השגיאה", "help_rename.png"),
+]
 ctk.set_appearance_mode("dark")
 def resource_path(relative_path):
     try:
-        base_path = sys._MEIPASS #type: ignore
+        base_path = sys._MEIPASS  # type: ignore[attr-defined]
     except AttributeError:
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
-# --- Logic Functions ---
 
 def parse_line(line: str):
     reader = csv.reader([line])
-    row = next(reader)
-    
-    if not row or not row[0].strip():
+    row = next(reader, None)
+    if not row or not row[0].strip() or len(row) < 11:
         return None
-    if len(row) < 11:
+    name = row[0].strip()
+    parts = name.split("_")
+    if len(parts) != 2 or not (parts[0].isdigit() and parts[1].isdigit()):
         return None
-        
-    value = row[0].strip()
-    parts = value.split('_')
-    if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-        name = row[0].strip()
-        start_time = row[8].strip()
-        duration = row[10].strip()
-        try:
-            h, m, s = duration.split(":")
-            total_duration = int(h) * 3600 + int(m) * 60 + int(s)
-        except ValueError:
-            return None
-        return (name, start_time, total_duration)
-    return None
-   
+    start_time = row[8].strip()
+    try:
+        h, m, s = row[10].strip().split(":")
+        duration = int(h) * 3600 + int(m) * 60 + int(s)
+    except ValueError:
+        return None
+    return (name, start_time, duration)
+
 def load_names_from_txt(filepath):
-    names = []
+    entries = []
     failures = []
     try:
-        with open(filepath, encoding='utf-8') as f:
+        with open(filepath, encoding="utf-8") as f:
             for line in f:
-                result = parse_line(line)
-                if result:
-                    names.append(result)
+                parsed = parse_line(line)
+                if parsed:
+                    entries.append(parsed)
     except Exception as e:
         failures.append(str(e))
-    return names, failures
+    return entries, failures
 
 def extract_datetime_from_filename(filename):
     try:
-        parts = filename.split("Time_")
-        time_part = parts[1].split("file")[0]
-        time_str = time_part.replace("_", ":")
-        parts_date = filename.split("Date_")[1].split("Time_")[0]
-        d, mo, y = parts_date.split("_")
-        h, mi, s = time_str.split(":")
+        time_part = filename.split("Time_")[1].split("file")[0]
+        h, mi, s = time_part.replace("_", ":").split(":")
+        date_part = filename.split("Date_")[1].split("Time_")[0]
+        d, mo, y = date_part.split("_")
         return datetime(int("20" + y), int(mo), int(d), int(h), int(mi), int(s)).timestamp()
     except (IndexError, ValueError):
         return None
 
 def extract_datetime_from_csv(csv_time):
+    #CSV times look like 'DD/MM/YYYY HH:MM:SS'.
     try:
         date_part = csv_time.split(" ")[0]
         time_part = csv_time.split(" ")[1]
@@ -85,348 +79,368 @@ def extract_datetime_from_csv(csv_time):
     except (IndexError, ValueError):
         return None
 
-
 def build_pairs(parsed_entries, files):
+
     pairs = []
     remaining = []
     for entry in parsed_entries:
         ts = extract_datetime_from_csv(entry[1])
         if ts is not None:
             remaining.append((entry, ts))
+
     for file in files:
-        filename = os.path.basename(file)
-        file_seconds = extract_datetime_from_filename(filename)
-        if file_seconds is None:
-            pairs.append((file, "NO_MATCH_FOUND"))
+        file_seconds = extract_datetime_from_filename(os.path.basename(file))
+        if file_seconds is None or not remaining:
+            pairs.append((file, NO_MATCH))
             continue
-        if not remaining:
-            pairs.append((file, "NO_MATCH_FOUND"))
-            continue
+
         extension = os.path.splitext(file)[1]
-
-        closest = min(remaining, key=lambda pair: abs(pair[1] - file_seconds))
-        entry, ts = closest
-        diff = abs(ts - file_seconds)
-
-        if diff > 300:
-            file_seconds_12h = file_seconds + 43200
-            closest_12h = min(remaining, key=lambda pair: abs(pair[1] - file_seconds_12h))
-            entry_12h, ts_12h = closest_12h
-            diff_12h = abs(ts_12h - file_seconds_12h)
-
-            if diff_12h <= 300:
-                new_filename = entry_12h[0] + extension
-                pairs.append((file, new_filename))
-                remaining.remove(closest_12h)
-                continue
-            
-            # no match found — check duration
-            if entry[2] <= 4:        
-                continue
-            
-            pairs.append((file, "NO_MATCH_FOUND"))
+        closest = min(remaining, key=lambda item: abs(item[1] - file_seconds))
+        if abs(closest[1] - file_seconds) <= MATCH_TOLERANCE:
+            pairs.append((file, closest[0][0] + extension))
+            remaining.remove(closest)
             continue
 
-        new_filename = entry[0] + extension
-        pairs.append((file, new_filename))
-        remaining.remove(closest)
+        # retry with a 12h shift
+        shifted = file_seconds + HALF_DAY
+        closest_12h = min(remaining, key=lambda item: abs(item[1] - shifted))
+        if abs(closest_12h[1] - shifted) <= MATCH_TOLERANCE:
+            pairs.append((file, closest_12h[0][0] + extension))
+            remaining.remove(closest_12h)
+            continue
+        pairs.append((file, NO_MATCH))
     return pairs
 
 def validate_pairs(names, files, pairs):
     warnings = []
-    valid_pairs = [p for p in pairs if p[1] != "NO_MATCH_FOUND"]
-    new_filenames = [p[1] for p in valid_pairs]
-    if len(valid_pairs) != len(files) - len([p for p in pairs if p[1] == "NO_MATCH_FOUND"]):
-        warnings.append(f"מספר שמות: {len(names)} \n לא תואם למספר הקבצים: {len(files)}")
-    if len(new_filenames) != len(set(new_filenames)):
-        warnings.append("קבצים כפולים נמצאו")
-    for pair in pairs:
-        if not os.path.exists(pair[0]):
-            warnings.append(f"{pair[0]} does not exist")
-    no_matches = [pair[0] for pair in pairs if pair[1] == "NO_MATCH_FOUND"]
-    if no_matches:
-        warnings.append(f"{len(no_matches)} files had no matching CSV entry")
+    matched = [p for p in pairs if p[1] != NO_MATCH]
+    unmatched = [p for p in pairs if p[1] == NO_MATCH]
+    if len(pairs) != len(files):
+        warnings.append("Preview is out of date - run Preview again before renaming")
+    if unmatched:
+        warnings.append(f"{len(unmatched)} files had no matching csv entry and will be skipped")
+
+    targets = [p[1] for p in matched]
+    if len(targets) != len(set(targets)):
+        warnings.append("Duplicate target names - only the first of each will be renamed")
+
+    for old_path, new_name in matched:
+        if not os.path.exists(old_path):
+            warnings.append(f"Missing source file: {os.path.basename(old_path)}")
+        elif os.path.exists(os.path.join(os.path.dirname(old_path), new_name)):
+            warnings.append(f"{new_name} already exists in the folder")
     return warnings
-
-
 
 def execute_rename(pairs):
     successes = []
     failures = []
-    for pair in pairs:
-        old_path = pair[0]
-        new_filename = pair[1]
-        folder = os.path.dirname(old_path)
-        new_path = os.path.join(folder, new_filename)
+    for old_path, new_name in pairs:
+        if new_name == NO_MATCH:
+            continue
+        new_path = os.path.join(os.path.dirname(old_path), new_name)
         if os.path.exists(new_path):
-            failures.append(f"{new_filename} already exists - skipped")
-            continue   
+            failures.append(f"{new_name} already exists - skipped")
+            continue
         try:
             os.rename(old_path, new_path)
-            successes.append(new_filename)
-        except Exception as e:
-            failures.append(str(e))
+            successes.append(new_name)
+        except OSError as e:
+            failures.append(f"{os.path.basename(old_path)}: {e}")
     return successes, failures
 
-# --- UI Functions ---
+class RenamerApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        self.title("JoshRenamer")
+        self.geometry("1280x720")
+        self.minsize(1080, 720)
+        self.configure(fg_color="#152538")
+        self.entries = []
+        self.files = []
+        self.pairs = []
+        self.log_lines = []
+        self.logs_window = None
+        self.logs_textbox = None
+        self.table = None
+        self.grid_columnconfigure(0, weight=0)
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+        self.set_icon()
+        self.sidebar()
+        self.build_main()
+        self.refresh_ui()
+        self.log("App started")
 
-def update_buttons():
-    if names and files:
-        btn_preview.configure(state="normal")
-        btn_rename.configure(state="normal")
-        btn_reset.configure(state="normal")
-    else:
-        btn_preview.configure(state="disabled")
-        btn_rename.configure(state="disabled")
-        btn_reset.configure(state="disabled")
-def load_txt():
-    global names
-    try:
-        filepath = filedialog.askopenfilename(title="Select an TXT file", filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")])
-        if filepath:
-            names, failures = load_names_from_txt(filepath)
-            if failures:
-                CTkMessagebox(title="Load Error", message="\n".join(failures), icon="warning")
+    def report_callback_exception(self, exc_type, exc_value, exc_tb):
+        traceback.print_exception(exc_type, exc_value, exc_tb)
+        self.log(f"[ERROR] {exc_type.__name__}: {exc_value}")
+        CTkMessagebox(title="Unexpected Error",
+                      message=f"{exc_type.__name__}: {exc_value}",
+                      icon="cancel")
 
-            update_buttons()
-            update_status()
-    except Exception as e:
-        CTkMessagebox(title="Error", message=f"Something went wrong:\n{e}", icon="cancel")
-       # empty_label.configure(text=f"TXT File: {len(names)} names loaded")
+    def set_icon(self):
+        try:
+            self.icon = tk.PhotoImage(file=resource_path("logo.png"))
+            self.iconphoto(True, self.icon)
+        except tk.TclError:
+            pass
 
-def select_files():
-    global files
-    selected = filedialog.askopenfilenames(title="Select an MP3 files", filetypes=[("Audio Files", "*.mp3"), ("All Files", "*.*")])
-    if selected:
-        files = list(selected)
-        update_buttons()
-        update_status()
+    def load_logo(self):
+        path = resource_path("logo.png")
+        if not os.path.exists(path):
+            return None
+        img = Image.open(path)
+        return ctk.CTkImage(light_image=img, dark_image=img, size=(52, 52))
 
-def update_status():
-    txt_status = f"TXT File: {len(names)} names loaded" if names else "TXT File: Not loaded"
-    files_status = f"MP3 Files: {len(files)} selected" if files else "MP3 Files: 0 selected"
-    print(names)
-    ready_status = "✔ Ready to preview" if names and files else "Waiting for input..."
+    def sidebar_button(self, parent, text, command):
+        btn = ctk.CTkButton(parent, text=text, command=command, width=160, height=38, corner_radius=8, fg_color="#3579b8", hover_color="#4a94d6", font=("Segoe UI", 13))
+        btn.pack(padx=20, pady=10)
+        return btn
 
-    empty_label.configure(text=f"{txt_status}\n{files_status}\n\n{ready_status}")
-    
-    
+    def sidebar(self):
+        sidebar = ctk.CTkFrame(self, width=200, fg_color="#1e3450", corner_radius=0)
+        sidebar.grid(row=0, column=0, sticky="nsw")
+        sidebar.grid_propagate(False)
+        logo = self.load_logo()
+        if logo:
+            ctk.CTkLabel(sidebar, image=logo, text="").pack(pady=(24, 6))
+        ctk.CTkLabel(sidebar, text="JoshRenamer", font=("Segoe UI", 17), text_color="#e8eef5").pack()
+        ctk.CTkLabel(sidebar, text="Batch renamer for call recordings", font=("Segoe UI", 11), text_color="#9db1c6", wraplength=170, justify="center").pack(pady=(2, 16))
+        self.btn_load_txt = self.sidebar_button(sidebar, "Load TXT", self.load_txt)
+        self.btn_select_files = self.sidebar_button(sidebar, "Select Files", self.select_files)
+        ctk.CTkFrame(sidebar, height=1, fg_color="#2c4b6e").pack(fill="x", padx=20, pady=10)
+        self.btn_preview = self.sidebar_button(sidebar, "Preview", self.preview)
+        self.btn_rename = ctk.CTkButton(sidebar, text="Rename Files", command=self.rename, width=160, height=40, corner_radius=8, fg_color="#2e9e5b", hover_color="#36b568", font=("Segoe UI", 14, "bold"))
+        self.btn_rename.pack(padx=20, pady=(40, 6))
+        self.btn_logs = ctk.CTkButton(sidebar, text="Logs", command=self.open_logs, width=160, height=32, corner_radius=8, fg_color="transparent", hover_color="#28466a", border_width=1, border_color="#2c4b6e", text_color="#9db1c6", font=("Segoe UI", 12))
+        self.btn_logs.pack(padx=20, pady=40)
+        self.btn_reset = ctk.CTkButton(sidebar, text="Reset", command=self.reset, width=160, height=34, corner_radius=8, fg_color="#a8433f", hover_color="#bd5450", font=("Segoe UI", 13, "bold"))
+        self.btn_reset.pack(side="bottom", pady=22, padx=20)
+        self.btn_help = ctk.CTkButton(sidebar, text="Help", command=self.open_help_window, width=160, height=34, corner_radius=8, fg_color="#3579b8", font=("Segoe UI", 13, "bold"))
+        self.btn_help.pack(side="bottom", pady=22, padx=20)
+    def build_main(self):
+        main = ctk.CTkFrame(self, fg_color="#152538")
+        main.grid(row=0, column=1, sticky="nsew")
+        main.grid_rowconfigure(1, weight=1)
+        main.grid_columnconfigure(0, weight=1)
+        header = ctk.CTkFrame(main, fg_color="#152538")
+        header.grid(row=0, column=0, sticky="ew", padx=18, pady=(16, 8))
+        ctk.CTkLabel(header, text="Rename Recordings", font=("Segoe UI", 24, "bold"), text_color="#e8eef5").pack(anchor="w")
+        ctk.CTkLabel(header, text="Load TXT  ->  Select Files  ->  Preview  ->  Rename", font=("Segoe UI", 12), text_color="#9db1c6").pack(anchor="w", pady=(2, 0))
 
-def preview():
-    global pairs, table
-    try:
+        self.table_container = ctk.CTkScrollableFrame(main, fg_color="#1a2f49", corner_radius=12)
+        self.table_container.grid(row=1, column=0, sticky="nsew", padx=18, pady=(4, 8))
 
-        pairs = build_pairs(names, files)
+        self.empty_label = ctk.CTkLabel(self.table_container, text="Nothing here yet.\nLoad a TXT file and select recordings, then hit Preview.", font=("Segoe UI", 15), text_color="#9db1c6", justify="center")
+        self.empty_label.pack(pady=60)
 
-        table_values = [["Original Filename", "New Filename"]]
+        status_bar = ctk.CTkFrame(main, fg_color="#1e3450", corner_radius=10)
+        status_bar.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 14))
+        self.status_label = ctk.CTkLabel(status_bar, text="", font=("Segoe UI", 12), text_color="#9db1c6")
+        self.status_label.pack(side="left", padx=14, pady=8)
+        self.match_label = ctk.CTkLabel(status_bar, text="", font=("Segoe UI", 12), text_color="#9db1c6")
+        self.match_label.pack(side="right", padx=14, pady=8)
 
-        for old_path, new_name in pairs:
-            table_values.append([os.path.basename(old_path), new_name])
+    def refresh_ui(self):
+        has_input = bool(self.entries and self.files)
+        self.btn_preview.configure(state="normal" if has_input else "disabled")
+        can_rename = any(p[1] != NO_MATCH for p in self.pairs)
+        self.btn_rename.configure(state="normal" if can_rename else "disabled")
 
-        table.destroy()
-        
-        empty_label.configure(text="")
-        table = CTkTable(
-            master=table_container,
-            width=15,
-            values=table_values,
-            colors=["#27435e", "#1d344a"],
-            header_color="#4653ab",
-            corner_radius=20
-        )
-        
-        table.pack(pady=4, padx=5, fill="both", expand=True)
-    except Exception as e:
-        CTkMessagebox(title="Error", message=f"Something went wrong:\n{e}", icon="cancel")
+        has_anything = bool(self.entries or self.files or self.pairs)
+        self.btn_reset.configure(state="normal" if has_anything else "disabled")
+
+        txt_part = f"{len(self.entries)} names loaded" if self.entries else "no TXT loaded"
+        files_part = f"{len(self.files)} files selected" if self.files else "no files selected"
+        self.status_label.configure(text=f"{txt_part}   ·   {files_part}")
+
+        if self.pairs:
+            matched = sum(1 for p in self.pairs if p[1] != NO_MATCH)
+            unmatched = len(self.pairs) - matched
+            text = f"{matched} matched"
+            if unmatched:
+                text += f", {unmatched} unmatched"
+            self.match_label.configure(text=text)
+        else:
+            self.match_label.configure(text="")
+
+    def clear_table(self):
+        if self.table is not None:
+            self.table.destroy()
+            self.table = None
+        self.empty_label.configure(
+            text="Nothing here yet.\nLoad a TXT file and select recordings, then hit Preview.")
+        if not self.empty_label.winfo_manager():
+            self.empty_label.pack(pady=60)
+
+    def show_pairs_table(self):
+        if self.table is not None:
+            self.table.destroy()
+        self.empty_label.pack_forget()
+
+        values = [["Original Filename", "New Filename"]]
+        for old_path, new_name in self.pairs:
+            display = new_name if new_name != NO_MATCH else "no match found"
+            values.append([os.path.basename(old_path), display])
+
+        self.table = CTkTable(master=self.table_container, values=values, colors=["#223f5e", "#1c3350"], header_color="#2d5f8f", text_color="#e8eef5", font=("Segoe UI", 12), corner_radius=10)
+        self.table.pack(fill="both", expand=True, padx=8, pady=8)
+
+        for i, (_, new_name) in enumerate(self.pairs, start=1):
+            if new_name == NO_MATCH:
+                self.table.edit_row(i, text_color="#f0a8a2")
 
 
-    
-    
-def rename():
-    try:
-        warnings = validate_pairs(names, files, pairs)
-        if warnings:
-            print(warnings)
-            CTkMessagebox(
-        title="Warning",
-        message="\n".join(warnings),
-        icon="warning"
-    )
+    def load_txt(self):
+        path = filedialog.askopenfilename(
+            title="Select the call log (TXT)",
+            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")])
+        if not path:
             return
-        successes, failures = execute_rename(pairs)
-        if successes:
-            CTkMessagebox(
-        title="Success",
-        message=f"Renamed {len(successes)} files",
-        icon="check",
-        option_1="Thanks!"
-    )
-        
+
+        entries, failures = load_names_from_txt(path)
+        self.entries = entries
+        self.pairs = []
+        self.clear_table()
+
         if failures:
-            CTkMessagebox(
-        title="Rename Errors",
-        message="\n".join(failures),
-        icon="warning"
-    )
-        logs_message("=== Rename Failure")
+            CTkMessagebox(title="Load Error", message="\n".join(failures), icon="warning")
+            self.log(f"Failed reading {os.path.basename(path)}: " + "; ".join(failures))
+        elif not entries:
+            CTkMessagebox(title="Nothing Loaded", message="No valid entries were found in that file.", icon="warning")
+            self.log(f"No valid entries in {os.path.basename(path)}")
+        else:
+            self.log(f"Loaded {len(entries)} entries from {os.path.basename(path)}")
+        self.refresh_ui()
+
+    def select_files(self):
+        selected = filedialog.askopenfilenames(
+            title="Select audio files",
+            filetypes=[("MP3 Files", "*.mp3"),("WAV Audio", "*.wav"), ("All Files", "*.*")])
+        if not selected:
+            return
+
+        self.files = list(selected)
+        self.pairs = []
+        self.clear_table()
+        self.log(f"Selected {len(self.files)} files")
+        self.refresh_ui()
+
+    def preview(self):
+        self.pairs = build_pairs(self.entries, self.files)
+        self.show_pairs_table()
+        matched = sum(1 for p in self.pairs if p[1] != NO_MATCH)
+        self.log(f"Preview: {matched}/{len(self.pairs)} files matched")
+        self.refresh_ui()
+
+    def rename(self):
+        warnings = validate_pairs(self.entries, self.files, self.pairs)
+        matched = [p for p in self.pairs if p[1] != NO_MATCH]
+
+        message = f"About to rename {len(matched)} file(s)."
+        if warnings:
+            message += "\n\n" + "\n".join(warnings)
+        box = CTkMessagebox(title="Confirm Rename", message=message, icon="question", option_1="Cancel", option_2="Rename")
+        if box.get() != "Rename":
+            return
+
+        successes, failures = execute_rename(self.pairs)
+        self.log(f"Renamed {len(successes)} file(s), {len(failures)} failure(s)")
         for failure in failures:
-                logs_message(f"[FAILED] {failure}")
-        logs_message("==================\n")
-        print(successes, failures)
+            self.log(f"  [FAILED] {failure}")
 
-    except Exception as e:
-        logs_message(f"[CRITICAL ERROR] Something went wrong: {e}")
-        CTkMessagebox(title="Error", message=f"Something went wrong:\n{e}", icon="cancel")
+        if failures:
+            CTkMessagebox(title="Finished With Errors", message=f"Renamed {len(successes)} files, {len(failures)} failed.\n" "See Logs for details.", icon="warning")
+            self.open_logs()
+        elif successes:
+            CTkMessagebox(title="Done", message=f"Renamed {len(successes)} files.",
+                          icon="check", option_1="Nice")
 
+        # the old paths are gone after a rename, so the selection is stale
+        self.files = []
+        self.pairs = []
+        self.clear_table()
+        self.empty_label.configure(text="Batch complete.\nSelect the next set of files whenever you're ready.")
+        self.refresh_ui()
 
-def reset():
-    global names, files, pairs, table
-    names.clear()
-    files.clear()
-    pairs.clear()
+    def reset(self):
+        self.entries = []
+        self.files = []
+        self.pairs = []
+        self.clear_table()
+        self.log("Reset")
+        self.refresh_ui()
 
-    
-    table.destroy()
-    table = CTkTable(master=table_container, width=15, colors=["#25415c", "#1d344a"], values=[[]], corner_radius=12)
-    table.pack(pady=14, padx=14, fill="both", expand=True)
+    def log(self, message: str):
+        line = f"[{datetime.now().strftime('%H:%M:%S')}] {message}"
+        self.log_lines.append(line)
+        if self.logs_textbox is not None and self.logs_textbox.winfo_exists():
+            self.logs_textbox.configure(state="normal")
+            self.logs_textbox.insert("end", line + "\n")
+            self.logs_textbox.configure(state="disabled")
+            self.logs_textbox.see("end")
 
-    empty_label.configure(text="No files loaded yet\nLoad a TXT file and select files to preview")
-    btn_preview.configure(state="disabled")
-    btn_rename.configure(state="disabled")
-    btn_reset.configure(state="disabled")
+    def open_logs(self):
+        if self.logs_window is not None and self.logs_window.winfo_exists():
+            self.logs_window.deiconify()
+            self.logs_window.lift()
+            self.logs_window.focus()
+            return
 
+        self.logs_window = ctk.CTkToplevel(self)
+        self.logs_window.title("Logs")
+        self.logs_window.geometry("560x320")
+        self.logs_window.attributes("-topmost", True)
 
-def logs_message(message: str):
-    global logs_window, logs_textbox
+        self.logs_textbox = ctk.CTkTextbox(self.logs_window, font=("Consolas", 12))
+        self.logs_textbox.pack(padx=10, pady=10, fill="both", expand=True)
+        if self.log_lines:
+            self.logs_textbox.insert("end", "\n".join(self.log_lines) + "\n")
+            self.logs_textbox.see("end")
+        self.logs_textbox.configure(state="disabled")
 
-    # 1. אם החלון לא קיים או נסגר על ידי המשתמש - ניצור אותו מחדש כאן
-    if logs_window is None or not logs_window.winfo_exists():
-        logs_window = ctk.CTkToplevel(app)
-        logs_window.title("Console Logs & Errors")
-        logs_window.geometry("500x300")
-        logs_window.attributes("-topmost", True)
+    def load_help_image(self, image_name, display_width=700):
+        path = resource_path(os.path.join("help", image_name))
+        if not os.path.exists(path):
+            return None
+        img = Image.open(path)
+        w, h = img.size
+        return ctk.CTkImage(light_image=img, dark_image=img, size=(display_width, int(h * display_width / w)))
 
-        # יצירת התיבה ישירות בתוך החלון החדש
-        logs_textbox = ctk.CTkTextbox(logs_window, width=480, height=280, font=("Consolas", 12))
-        logs_textbox.pack(padx=10, pady=10, fill="both", expand=True)
-        logs_textbox.configure(state="disabled")
+    def open_help_window(self):
+        self.help_window = ctk.CTkToplevel(self)
+        self.help_window.title("Help")
+        self.help_window.geometry("960x520")
         
-        # מכריח את ה-UI להתרענן ולהיבנות פיזית בזיכרון
-        logs_window.update()
-
-    # 2. הזרקת הטקסט - מתבצעת רק אחרי שאנחנו בטוחים ב-100% שהרכיב קיים
-    if logs_textbox is not None:
-        logs_textbox.configure(state="normal")
-        logs_textbox.insert("end", message + "\n")
-        logs_textbox.configure(state="disabled")
-        logs_textbox.see("end")  # גלילה אוטומטית לסוף הטקסט
-
-# --- UI Layout ---
-
-app = ctk.CTk()
-app.iconbitmap("police.png")
-app.title("JoshRenamer")
-app.geometry("1280x720")
-
-
-app.configure(fg_color="#1c3554")
-
-# רק grid על app
-app.grid_columnconfigure(0, weight=0)   # sidebar
-app.grid_columnconfigure(1, weight=1)   # main
-app.grid_rowconfigure(0, weight=1)
-
-sidebar = ctk.CTkFrame(app, width=180, fg_color="#2c4f70", corner_radius=0)
-sidebar.grid(row=0, column=0, sticky="ns")
-sidebar.grid_propagate(False)
-
-main = ctk.CTkFrame(app, fg_color="#1c3554")
-main.grid(row=0, column=1, sticky="nsew")
-
-your_img_path = resource_path("police.png")
-
-my_image = ctk.CTkImage(
-    light_image=Image.open(your_img_path),
-    dark_image=Image.open(your_img_path),
-    size=(50, 50)
-)
-
-# test button for error
-def test_error_trigger():
-    mock_failures = [
-        "קובץ 'photo.jpg' נעול על ידי תוכנה אחרת",
-        "אין הרשאות כתיבה לתיקייה C:/Protected",
-        "השם החדש מכיל תווים לא חוקיים (?, *, :)"
-    ]
+        self.help_window.after(200, lambda: self.help_window.focus())
     
-    logs_message("=== RENAME FAILURES (TEST) ===")
-    for failure in mock_failures:
-        logs_message(f"[FAILED] {failure}")
-    logs_message("=======================\n")
+        frame = ctk.CTkScrollableFrame(self.help_window, fg_color="#152538")
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-# יצירת כפתור זמני בנאבר להרצת הטסט
-btn_test = ctk.CTkButton(sidebar, text="בדיקת שגיאות (Test)", fg_color="red", command=test_error_trigger)
-#btn_test.grid(row=5, column=5, sticky="ns")
+        ctk.CTkLabel(frame, text="How to use JoshRenamer", font=("Segoe UI", 20, "bold"), text_color="#e8eef5").pack(anchor="w", padx=8, pady=(6, 14))
+        for i, (step_title, description, image_name) in enumerate(HELP_STEPS, start=1):
+            card = ctk.CTkFrame(frame, fg_color="#1a2f49", corner_radius=12)
+            card.pack(fill="x", padx=8, pady=(0, 14))
+ 
+            ctk.CTkLabel(card, text=f"{i}.  {step_title}", font=("Segoe UI", 15, "bold"), text_color="#e8eef5").pack(anchor="w", padx=14, pady=(12, 2))
+            ctk.CTkLabel(card, text=description, font=("Segoe UI", 12), text_color="#9db1c6", wraplength=520, justify="left").pack(anchor="w", padx=14, pady=(0, 10))
+ 
+            image = self.load_help_image(image_name)
+            if image:
+                ctk.CTkLabel(card, image=image, text="").pack(padx=14, pady=(0, 14))
+            else:
+                ctk.CTkLabel(card, text=f"Screenshot missing: help/{image_name}", font=("Segoe UI", 11, "italic"), text_color="#9db1c6").pack(anchor="w", padx=14, pady=(0, 12))
 
-logo = ctk.CTkLabel(sidebar, image=my_image, text="")
-logo.pack(side="top", pady=(18, 14))
-
-btn_load_txt = ctk.CTkButton(sidebar, text="Load TXT File", command=load_txt, width=140, height=38, hover_color="#3a92d9", font=("Arial", 14))
-btn_load_txt.pack(padx=20, pady=8)
-
-btn_select_files = ctk.CTkButton(sidebar, text="Select Files", command=select_files, width=140, height=38, hover_color="#3a92d9", font=("Arial", 14))
-btn_select_files.pack(padx=20, pady=8)
-
-btn_preview = ctk.CTkButton(sidebar, text="Preview", command=preview, width=140, height=38, hover_color="#3a92d9", font=("Arial", 14))
-btn_preview.pack(padx=20, pady=8)
-btn_preview.configure(state="disabled")
-
-btn_rename = ctk.CTkButton(sidebar, text="Rename Files", command=rename, width=140, height=40, hover_color="#28b463", font=("Arial", 14, "bold"))
-btn_rename.pack(padx=20, pady=(8, 14))
-btn_rename.configure(state="disabled")
-
-
-btn_reset = ctk.CTkButton(sidebar, text="Reset", command=reset, width=140, height=36, fg_color="#b03a48", hover_color="#c44555", font=("Arial", 13,"bold"))
-btn_reset.pack(side="bottom", pady=24, padx=20)
-btn_rename.configure(state="disabled")
-
-# header בתוך main
-
-btn_logs = ctk.CTkButton(sidebar, text="Logs", command=logs_message("החלון נפתח לבד"))
-
-header = ctk.CTkFrame(main, fg_color="#1c3554")
-header.pack(fill="x", padx=10, pady=10)
-
-
-title = ctk.CTkLabel(header, text="JoshRenamer", font=("Arial", 28, "bold"), text_color="white")
-title.pack(anchor="n", padx=16, pady=(12, 4))
-
-steps = ctk.CTkLabel(
-    header,
-    text="1. Load TXT → 2. Select Files → 3. Preview → 4. Rename",
-    font=("Arial", 13),
-    text_color="#bfc9d4"
-)
-steps.pack(anchor="n", padx=16, pady=(0, 12))
-
-
-# table בתוך table_container
-table_container = ctk.CTkScrollableFrame(main, fg_color="#406e9c", corner_radius=14)
-table_container.pack(fill="both", expand=True, padx=10, pady=(0, 5))
-
-empty_label = ctk.CTkLabel(
-    table_container,
-    text="No files loaded yet\nLoad a TXT file and select files to preview",
-    font=("Arial", 16),
-    text_color="#bfc9d4",
-    justify="center"
-)
-empty_label.pack(anchor="n", padx=16, pady=(12, 6))
-
-table_values = [[]]
-table = CTkTable(master=table_container, width=15, colors=["#25415c", "#1d344a"], values=table_values, corner_radius=12)
-table.pack(pady=14, padx=14, fill="both", expand=True)
+def main():
+    app = RenamerApp()
+    app.mainloop()
 
 
 
-app.mainloop()
+
+
+
+    
+
+if __name__ == "__main__":
+    main()
